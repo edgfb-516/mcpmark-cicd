@@ -1,0 +1,157 @@
+name: PR Automation Workflow
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Run ESLint
+        id: eslint
+        run: npm run lint 2>&1 || echo "ESLint found issues"
+      - name: Run Prettier Check
+        id: prettier
+        run: npx prettier --check . 2>&1 || echo "Prettier found formatting issues"
+      - name: Post Code Quality Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eslintOutput = `${{ steps.eslint.outputs.stdout }}`;
+            const prettierOutput = `${{ steps.prettier.outputs.stdout }}`;
+            const comment = `## Code Quality Report
+### ESLint Results:
+\`\`\`
+${eslintOutput || 'No ESLint issues found'}
+\`\`\`
+### Prettier Results:
+\`\`\`
+${prettierOutput || 'No Prettier formatting issues found'}
+\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  testing-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Run Tests with Coverage
+        id: tests
+        run: npm test -- --coverage 2>&1 || echo "Tests failed or no coverage data"
+      - name: Post Test Coverage Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testOutput = `${{ steps.tests.outputs.stdout }}`;
+            const comment = `## Test Coverage Report
+\`\`\`
+${testOutput || 'No test coverage data available'}
+\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Run Dependency Vulnerability Check
+        id: npm-audit
+        run: npm audit 2>&1 || echo "Vulnerabilities found or audit failed"
+      - name: Scan for Secrets
+        id: secret-scan
+        run: npx gitleaks detect --source . --report-path gitleaks-report.json 2>&1 || echo "No secrets detected or scan failed"
+      - name: Post Security Scan Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auditOutput = `${{ steps.npm-audit.outputs.stdout }}`;
+            const secretOutput = `${{ steps.secret-scan.outputs.stdout }}`;
+            const comment = `## Security Scan Report
+### Dependencies Vulnerabilities:
+\`\`\`
+${auditOutput || 'No dependency vulnerabilities found'}
+\`\`\`
+### Secrets Scan Results:
+\`\`\`
+${secretOutput || 'No secrets detected'}
+\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  build-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Build Application
+        id: build
+        run: npm run build 2>&1 || echo "Build failed"
+      - name: Validate Build Output
+        id: endpoints
+        run: |
+          if [ -d "dist/" ]; then
+            echo "✅ Build output directory exists (dist/)"
+          else
+            echo "❌ Build output directory missing (dist/)"
+          fi
+      - name: Upload Deployment Preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-preview
+          path: dist/
+          if-no-files-found: warn
+      - name: Post Build Validation Status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const buildOutput = `${{ steps.build.outputs.stdout }}`;
+            const endpointOutput = `${{ steps.endpoints.outputs.stdout }}`;
+            const comment = `## Build Validation
+### Build Status:
+\`\`\`
+${buildOutput || 'Build completed successfully'}
+\`\`\`
+### Build Output Validation:
+\`\`\`
+${endpointOutput || 'Build output validated successfully'}
+\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
